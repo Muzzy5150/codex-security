@@ -45,15 +45,15 @@ def _strings(value: Any) -> list[str]:
     return [text for item in value if (text := _text(item, ""))]
 
 
-def _path_label(value: str) -> str:
+def _path_label(value: str, *, ensure_ascii: bool = False) -> str:
     if "," in value or value != " ".join(value.split()) or any(ord(c) < 32 for c in value):
-        quoted = json.dumps(value, ensure_ascii=False)
+        quoted = json.dumps(value, ensure_ascii=ensure_ascii)
         return "".join(c if c.isprintable() else json.dumps(c)[1:-1] for c in quoted)
     return value
 
 
-def _path_text(value: str) -> str:
-    label = _path_label(value)
+def _path_text(value: str, *, ensure_ascii: bool = False) -> str:
+    label = _path_label(value, ensure_ascii=ensure_ascii)
     if label != value:
         marker = _code_fence(label, minimum=1)
         return f"{marker}{label}{marker}"
@@ -988,10 +988,10 @@ def build_report_markdown(
                 + " |"
             )
     open_questions = coverage.get("openQuestions", [])
-    questions = list(open_questions) if isinstance(open_questions, list) else []
+    deferred_questions = []
     deferred = coverage.get("deferred", [])
     if isinstance(deferred, list):
-        questions.extend(
+        deferred_questions = [
             {
                 "question": item.get("reason", "Deferred review requires follow-up."),
                 "followUpPrompt": " ".join(
@@ -1008,9 +1008,14 @@ def build_report_markdown(
             }
             for item in deferred
             if isinstance(item, dict)
-        )
-    if questions:
-        lines.extend(["", "## Open Questions And Follow Up", ""])
+        ]
+    for heading, questions in (
+        ("Deferred Requested Work", deferred_questions),
+        ("Open Questions And Follow Up", open_questions),
+    ):
+        if not isinstance(questions, list) or not questions:
+            continue
+        lines.extend(["", f"## {heading}", ""])
         for question in questions:
             if not isinstance(question, dict):
                 continue

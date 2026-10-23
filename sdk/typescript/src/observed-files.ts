@@ -119,6 +119,8 @@ function literalWords(command: string): string[] | null {
       continue;
     }
     if (/[\r\n;|&<>$`(){}]/u.test(char)) return null;
+    // An unquoted leading tilde depends on shell home context absent from logs.
+    if (char === "~" && !started) return null;
     if (char === "'" || char === '"') {
       quote = char;
       started = true;

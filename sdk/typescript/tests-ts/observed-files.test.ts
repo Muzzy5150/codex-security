@@ -116,6 +116,17 @@ describe("files observed in saved tool outputs", () => {
       paths(read("grep -H 'token' src/a.ts", "src/a.ts:const token = 1;\n")),
     ).toEqual(["src/a.ts"]);
   });
+  test("excludes unresolved home expansion while retaining literal tilde paths", () => {
+    expect(
+      paths([
+        ...read("cat ~/outside.ts"),
+        ...read("cat ~other/outside.ts"),
+        ...read("cat '~'/'literal.ts'"),
+        ...read('cat "~/another.ts"'),
+        ...read("cat src/~local.ts"),
+      ]),
+    ).toEqual(["~/literal.ts", "~/another.ts", "src/~local.ts"]);
+  });
   test("excludes filenames, counts, scripts, compounds, failed reads and empty output", () => {
     expect(
       paths([

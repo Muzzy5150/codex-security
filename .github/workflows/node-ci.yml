@@ -80,9 +80,16 @@ jobs:
                   ;;
                 .github/workflows/node-ci.yml | .github/actions/setup-tools/*)
                   container_validate=true
-                  test_quality=true
                   ;;
-                .github/workflows/test-quality.yml)
+              esac
+              case "$path" in
+                .github/workflows/node-ci.yml | .github/workflows/test-quality.yml | \
+                  .github/actions/setup-tools/* | sdk/typescript/bunfig.toml | \
+                  sdk/typescript/scripts/compare-test-reports.mts | \
+                  sdk/typescript/scripts/prepare-windows-test-root.ps1 | \
+                  sdk/typescript/scripts/run-ci-tests.mts | \
+                  sdk/typescript/scripts/test-shards.mts | \
+                  sdk/typescript/scripts/test-timings.json)
                   test_quality=true
                   ;;
               esac
@@ -133,6 +140,8 @@ jobs:
         run: pnpm --dir sdk/typescript run format
       - name: Check MCP formatting
         run: pnpm --dir plugins/codex-security/mcp-app exec prettier --check "**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}"
+      - name: Audit production dependencies
+        run: pnpm --dir sdk/typescript run audit:prod
 
   native:
     needs: classify-changes
@@ -168,8 +177,6 @@ jobs:
         uses: ./.github/actions/download-native
       - *set-up-typescript-tools
       - *install-dependencies
-      - name: Audit production dependencies
-        run: pnpm --dir sdk/typescript run audit:prod
       - name: Pack
         working-directory: sdk/typescript
         run: pnpm pack --pack-destination ../../dist
@@ -455,6 +462,14 @@ jobs:
       - name: Test secret discovery eval contracts
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: node --experimental-strip-types --test evals/secret-discovery/test_*.mts
+      - name: Build host plugin for Standard eval integration
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: |
+          node plugins/codex-security/mcp-app/scripts/build_mcp_app.mjs --output plugins/codex-security/mcp --native host
+          ln -s ../../plugins/codex-security sdk/typescript/_bundled_plugin
+      - name: Test Standard time-budget eval contracts
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: node --experimental-strip-types --test evals/standard-time-budget/test_*.mts
       - name: Test workflow routing eval contracts
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: node --experimental-strip-types --test evals/workflow-routing/test_*.mts
