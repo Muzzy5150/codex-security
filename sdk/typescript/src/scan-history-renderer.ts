@@ -273,7 +273,8 @@ export function renderScanHistory(
     );
     if (typeof result["startedAt"] === "string") {
       lines.push(`  ${strong("STARTED")}  ${clean(result["startedAt"])}`);
-    } else if (typeof result["updatedAt"] === "string") {
+    }
+    if (typeof result["updatedAt"] === "string") {
       lines.push(`  ${strong("UPDATED")}  ${clean(result["updatedAt"])}`);
     }
     const canonicalCoverage = result["coverage"] as CoverageSummary | undefined;
