@@ -7416,6 +7416,7 @@ describe("CodexSecurity orchestration", () => {
         "prepare-scan-completion",
         "complete-scan",
         "list-global-findings",
+        "get-scan",
       ]);
       await client.close();
     },
@@ -8217,6 +8218,7 @@ describe("CodexSecurity orchestration", () => {
       "prepare-scan-completion",
       "complete-scan",
       "list-global-findings",
+      "get-scan",
     ]);
     expect(commands.some((args) => args[0] === "fail-scan")).toBe(false);
     await client.close();
