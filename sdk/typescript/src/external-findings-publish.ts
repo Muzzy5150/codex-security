@@ -400,12 +400,16 @@ export async function prepareNormalizedExternalPublication(
     identities.add(id);
     finding.evidence = validateExternalEvidence(finding.evidence);
   }
+  const identity =
+    current.report === undefined
+      ? current.findings
+      : { findings: current.findings, report: reportForJson(current.report) };
   return preparePublicationInput(
     {
       current,
       legacy: current,
-      currentIdentity: current.findings,
-      legacyIdentity: current.findings,
+      currentIdentity: identity,
+      legacyIdentity: identity,
     },
     options,
     dependencies,

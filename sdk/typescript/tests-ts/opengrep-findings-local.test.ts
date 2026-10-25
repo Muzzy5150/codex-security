@@ -114,7 +114,7 @@ test("empty OpenGrep local imports retain scanner diagnostics without creating f
       repository: fixture.repository,
       provider: "opengrep" as const,
       sourceKey: "example-project:main:opengrep",
-      sourceRepositoryUrl: repositoryUrl,
+      sourceRepositoryUrl: "https://github.com/Example/PROJECT",
     };
     const dependencies = { environment: fixture.environment };
     await expect(

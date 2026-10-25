@@ -2370,15 +2370,12 @@ test("readback retry preserves acknowledged findings and scanner diagnostics", a
   const input = opengrepJson();
   const f = await fixture(input);
   f.state.brokenReadback = true;
-  const prepared = await prepareExternalPublication(
-    f.file,
-    {
-      ...options,
-      provider: "opengrep",
-      sourceRepositoryUrl: f.destination().url,
-    },
-    f.deps,
-  );
+  const settings = {
+    ...options,
+    provider: "opengrep" as const,
+    sourceRepositoryUrl: f.destination().url,
+  };
+  const prepared = await prepareExternalPublication(f.file, settings, f.deps);
   try {
     await prepared.publish();
     throw new Error("Expected readback interruption");
@@ -2392,8 +2389,17 @@ test("readback retry preserves acknowledged findings and scanner diagnostics", a
     });
     (error.result.report!["errors"] as unknown[]).pop();
   }
+  const changed = structuredClone(input);
+  changed.errors[0]!.message = "A different scanner diagnostic";
+  await writeFile(f.file, JSON.stringify(changed));
+  const different = await prepareExternalPublication(f.file, settings, f.deps);
+  expect(different.preview.resumed).toBe(false);
+  expect(different.preview.report?.["errors"]).toEqual(changed.errors);
+  await writeFile(f.file, JSON.stringify(input));
+  const original = await prepareExternalPublication(f.file, settings, f.deps);
+  expect(original.preview.resumed).toBe(true);
   f.state.brokenReadback = false;
-  const retried = await prepared.publish();
+  const retried = await original.publish();
   expect(retried.report?.["errors"]).toEqual(input.errors);
   expect(retried.verified).toBe(1);
   expect(f.posts).toHaveLength(1);
