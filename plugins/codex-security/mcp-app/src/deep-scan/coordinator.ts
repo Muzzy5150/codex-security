@@ -87,6 +87,7 @@ export interface CoordinatorOptions {
     run: DeepScanRunState,
     signal: AbortSignal,
   ) => Promise<DeepScanRunState>;
+  prepareReviewItems?: () => Promise<{ reviewItemsTotal: number }>;
   onComplete?: (
     draft: ScanDraftInput,
     signal: AbortSignal,
@@ -363,6 +364,19 @@ export class DeepScanCoordinator {
   private async run(): Promise<void> {
     try {
       await ensureDeepScanDirectories(this.artifacts);
+      if (this.canceled || this.externallyFailed) return;
+
+      if (
+        this.options.prepareReviewItems &&
+        !hasAcceptedWorkerResults(this.state)
+      ) {
+        const inventory = await this.options.prepareReviewItems();
+        if (inventory.reviewItemsTotal === 0) {
+          throw new Error(
+            "Deep Scan target contains no reviewable source files; no security audit was performed.",
+          );
+        }
+      }
       if (this.canceled || this.externallyFailed) return;
 
       this.setupComplete = true;
@@ -1260,6 +1274,14 @@ function workerLabelSequence(
 
 function cloneState(state: DeepScanRunState): DeepScanRunState {
   return { ...state, config: { ...state.config } };
+}
+
+function hasAcceptedWorkerResults(state: DeepScanRunState): boolean {
+  return (state.persistedWorkers ?? []).some(
+    (worker) =>
+      worker.status === "succeeded" &&
+      (worker.kind === "discovery" || worker.kind === "dedup"),
+  );
 }
 
 function latestPersistedReplaceableFailure(
