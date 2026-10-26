@@ -1,0 +1,47 @@
+# The image lock binds the public Wolfi packages and the locally signed scanner.
+contents:
+  repositories:
+    - https://packages.wolfi.dev/os
+  build_repositories:
+    - ./packages
+  keyring:
+    - ./wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - nodejs-26=26.12.1-r2
+    - python-3.13
+    - git
+    - openssh-client
+    - codex-security=0.7.0-r1
+archs:
+  - x86_64
+accounts:
+  groups:
+    - groupname: codex-security
+      gid: 10001
+  users:
+    - username: codex-security
+      uid: 10001
+      gid: 10001
+      homedir: /state
+      shell: /bin/sh
+  run-as: '10001:10001'
+paths:
+  - {path: /input, type: directory, uid: 0, gid: 0, permissions: 0o755}
+  - {path: /output, type: directory, uid: 10001, gid: 10001, permissions: 0o755}
+  - {path: /state, type: directory, uid: 10001, gid: 10001, permissions: 0o755}
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  HOME: /state
+  CODEX_HOME: /state
+  CODEX_SECURITY_STATE_DIR: /output/.codex-security-state
+  GIT_TERMINAL_PROMPT: '0'
+  PYTHON: /usr/bin/python3
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+work-dir: /state
+entrypoint:
+  command: /usr/local/bin/codex-security-entrypoint
+cmd: --help

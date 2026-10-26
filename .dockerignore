@@ -14,3 +14,4 @@ plugins/codex-security/tests
 **/security-scans
 **/state
 **/*.log
+docker/wolfi/build
