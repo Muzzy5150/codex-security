@@ -124,7 +124,8 @@ def test_cli_handoff_scopes_inherited_policy_to_requested_paths(tmp_path: Path) 
         "api/nested/SECURITY.md",
         "client/SECURITY.md",
     ]
-    assert registration["phase"] == "threat_model"
+    started = scan_command(tmp_path / "state", "get-scan", registration["scanId"])
+    assert started["scan"]["progress"]["phase"] == "threat_model"
 
 
 def _start_diff_scan_with_draft(tmp_path: Path, kind: str) -> tuple[Path, Path, dict[str, Any]]:

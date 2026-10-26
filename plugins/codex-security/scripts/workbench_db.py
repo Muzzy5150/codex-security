@@ -1877,21 +1877,21 @@ def register_cli_scan(
         connection.rollback()
         raise
     scan = require_scan(connection, scan_id)
-    return {
+    result = {
         **({"archivedScanDir": str(archived_scan_dir)} if archived_scan_dir is not None else {}),
         "contract": scan_contract(scan),
         "scanDir": str(scan_dir),
         "scanId": scan_id,
         "scopeFileCount": scope_file_count,
         **policy,
-        "prepareScopedInventory": (
-            mode == "standard"
-            and requested_target["kind"] == "paths"
-            and (target_identity[0] != "unversioned" or len(file_paths) == len(paths))
-        ),
         "targetId": target_id,
         "targetRevision": scan["target_revision"],
     }
+    if mode == "standard" and requested_target["kind"] == "paths":
+        result["prepareScopedInventory"] = target_identity[0] != "unversioned" or len(
+            file_paths
+        ) == len(paths)
+    return result
 
 
 def set_scan_thread(connection: sqlite3.Connection, args: argparse.Namespace) -> dict[str, Any]:
