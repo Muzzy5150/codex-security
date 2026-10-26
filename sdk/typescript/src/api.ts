@@ -2717,10 +2717,7 @@ export class CodexSecurity {
       if (scopeFileCount !== null) {
         tracker.setExpectedFilesTotal(scopeFileCount);
         reportProgress({
-          phase:
-            registration["phase"] === "threat_model"
-              ? "threat_model"
-              : "preflight",
+          phase: "preflight",
           filesCompleted: 0,
           filesTotal: scopeFileCount,
         });
