@@ -2770,7 +2770,9 @@ def scan_context(
 
 
 def get_scan(connection: sqlite3.Connection, args: argparse.Namespace) -> dict[str, Any]:
-    result = scan_context(connection, args.scan_id, args.occurrence_id, args.include_policy_paths)
+    result = scan_context(
+        connection, args.scan_id, args.occurrence_id, getattr(args, "include_policy_paths", False)
+    )
     if result["scan"]["progress"]["status"] != "running":
         scan = require_scan(connection, args.scan_id)
         try:
