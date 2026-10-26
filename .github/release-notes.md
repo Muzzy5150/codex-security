@@ -4,7 +4,7 @@
 
 ## Highlights
 
-No release highlights have been drafted yet.
+- skip Office owner files in knowledge-base folders ([#1913](https://github.com/openai/codex-security/pull/1913))
 
 <!-- release-section: highlights:end -->
 
