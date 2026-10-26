@@ -777,14 +777,14 @@ async function testSemanticScanDraftCompletion(
           handoffClaimToken,
         }),
       ).scan.progress;
-    assert.equal((await progress()).phase, "preflight");
+    assert.equal((await progress()).phase, "threat_model");
     requireSuccessfulTool(
       await call("update_codex_security_scan_progress", {
         scanId,
         handoffClaimToken,
         phaseItemsTotal: 1,
         phaseItemsCompleted: 1,
-        phaseProgressUnit: "checks",
+        phaseProgressUnit: "threat_surfaces",
       }),
     );
     const checkpoint = {
@@ -847,7 +847,7 @@ async function testSemanticScanDraftCompletion(
       documentType,
       schemaVersion,
       scanId: coverageScanId,
-      ...savedCoverage
+      deferred,
     } = await readJson(scanDirectory, "coverage.json");
     assert.equal(documentType, "codex-security.coverage");
     assert.equal(schemaVersion, "1.0");
@@ -856,7 +856,9 @@ async function testSemanticScanDraftCompletion(
       scanId,
       findingCount: 1,
       surfaceCount: 1,
-      coverage: savedCoverage,
+      assignedDeferred: coverage.deferred.flatMap((row, index) =>
+        "id" in row ? [] : [{ index, id: deferred[index].id }],
+      ),
       operation: "replace",
       status: "draft_written",
     });
@@ -1475,6 +1477,7 @@ async function testDiscoveryWorkerToolList(bundle: string) {
       findings: [],
       coverage: {
         ...workerDraft([]).coverage,
+        surfaces: [{ label: "API", disposition: "no_issue_found" }],
         explicitExclusions: [
           { pattern: "vendor/**", reason: "Third-party source." },
         ],
@@ -1516,15 +1519,49 @@ async function testDiscoveryWorkerToolList(bundle: string) {
     await assert.rejects(readFile(resultPath), { code: "ENOENT" });
 
     const result = await client.callTool({ name: tool.name, arguments: input });
+    const saved = await readJson(resultPath);
+    const savedSurface = saved.coverage.surfaces[0];
+    assert.equal(typeof savedSurface.id, "string");
     assert.deepEqual(result.structuredContent, {
       scanId,
       findingCount: 0,
-      surfaceCount: 0,
-      coverage: (await readJson(resultPath)).coverage,
+      surfaceCount: 1,
+      assignedSurfaces: [{ index: 0, id: savedSurface.id }],
       operation: "replace",
       status: "draft_written",
     });
-    assert.deepEqual(await readJson(resultPath), input);
+    assert.deepEqual(
+      JSON.parse((result.content as TextContent[])[0].text),
+      result.structuredContent,
+    );
+    assert.deepEqual(saved, {
+      ...input,
+      coverage: {
+        ...input.coverage,
+        surfaces: [
+          {
+            ...input.coverage.surfaces[0],
+            id: savedSurface.id,
+            receiptRefs: [],
+          },
+        ],
+      },
+    });
+    const next = await client.callTool({
+      name: tool.name,
+      arguments: {
+        ...input,
+        coverage: { ...input.coverage, surfaces: [], deferred: [] },
+      },
+    });
+    assert.deepEqual(next.structuredContent, {
+      scanId,
+      findingCount: 0,
+      surfaceCount: 1,
+      operation: "replace",
+      status: "draft_written",
+    });
+    assert.deepEqual((await readJson(resultPath)).coverage, saved.coverage);
     for (const canonicalName of [
       "scan-manifest.json",
       "findings.json",

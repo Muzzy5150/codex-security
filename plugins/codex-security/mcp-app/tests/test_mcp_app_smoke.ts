@@ -359,6 +359,7 @@ async function assertWorkspaceWorksWithoutUiCapability(scope: string) {
   if (scope !== scope.trim() && scope.trim() !== "./")
     await mkdir(path.join(targetPath, scope.trim()));
   await writeFile(path.join(targetPath, scope, "source.py"), "pass\n");
+  await writeFile(path.join(targetPath, "SECURITY.md"), "Review this scope.");
   await writeFile(path.join(targetPath, "outside.py"), "pass\n");
   const userContext = "--data\nUnicode Ä 日本語\n".repeat(200).trim();
   const nonUiStateDir = path.join(tmpdir(), randomUUID());
@@ -469,6 +470,9 @@ async function assertWorkspaceWorksWithoutUiCapability(scope: string) {
         canonicalTarget,
       );
       assert.equal(launched.result.structuredContent.scan.scope, scope);
+      assert.deepEqual(launched.result.structuredContent.securityPolicyPaths, [
+        "SECURITY.md",
+      ]);
       assert.deepEqual(
         launched.result.structuredContent.scan.contract.scope
           .requiredIncludePaths,
@@ -560,14 +564,14 @@ async function assertHeadlessStandardScanWorksWithoutUiCapability() {
     assert.equal(result.scan.scanId, result.scanId);
     assert.equal(result.scan.scanDir, result.scanDir);
     assert.equal(result.scan.handoffClaimToken, undefined);
-    assert.equal(result.workspace.results.handoffClaimToken, undefined);
+    assert.equal(result.workspace, undefined);
     assert.equal(result.scan.continuationThreadId, ownerThread);
-    assert.equal(result.scan.progress.phase, "preflight");
+    assert.equal(result.scan.progress.phase, "threat_model");
     assert.equal(result.scan.progress.status, "running");
     assert.equal(result.scan.model, "gpt-5.6-sol");
     assert.equal(result.scan.reasoningEffort, "high");
     assert.equal(result.scan.userContext, headlessContext);
-    assert.equal(result.workspace.userContext, headlessContext);
+    assert.deepEqual(result.securityPolicyPaths, []);
 
     const joined = await headlessServer.callTool(4, {
       name: "start_codex_security_standard_scan",
@@ -581,13 +585,9 @@ async function assertHeadlessStandardScanWorksWithoutUiCapability() {
     assert.equal(joined.result.structuredContent.startDisposition, "joined");
     assert.equal(joined.result.structuredContent.scanId, result.scanId);
     for (const response of [started, joined]) {
-      assert.match(
-        response.result.content[0].text,
-        /references\/scan-runtime\.md/,
-      );
       assert.doesNotMatch(
         response.result.content[0].text,
-        /security_scan preflight/,
+        /Daybreak|scan-runtime|preflight/,
       );
     }
     assert.equal(
@@ -625,7 +625,7 @@ async function assertHeadlessStandardScanWorksWithoutUiCapability() {
       arguments: {
         scanId: result.scanId,
         handoffClaimToken: result.handoffClaimToken,
-        phase: "threat_model",
+        phase: "discovery",
       },
       _meta: { "openai/threadId": ownerThread },
     });
@@ -645,7 +645,7 @@ async function assertHeadlessStandardScanWorksWithoutUiCapability() {
     );
     assert.equal(
       rejoinedAfterPreflight.result.structuredContent.scan.progress.phase,
-      "threat_model",
+      "discovery",
     );
 
     for (const threadSource of [undefined, "security_scan"]) {
@@ -1773,6 +1773,11 @@ try {
   assert.ok(listGlobalFindings);
   assert.ok(listRepositories);
   assert.ok(getScanContext);
+  for (const tool of [startHeadlessStandardScan, getScanContext]) {
+    assert.deepEqual(tool._meta["openai/requestedEntitlements"], [
+      "cyber_trusted_access",
+    ]);
+  }
   assert.ok(updateScanContext);
   assert.ok(updateScanContextFromApp);
   assert.ok(submit);
@@ -2518,9 +2523,44 @@ try {
   const delivered = await testServer.callTool(2003, {
     name: "get_codex_security_scan_context",
     arguments: { handoffClaimToken, scanId },
-    _meta: { "openai/threadId": "fixture-thread" },
+    _meta: {
+      threadId: "fixture-thread",
+      "openai/entitlementContext": {
+        schemaVersion: 1,
+        entitlements: {
+          cyber_trusted_access: {
+            schemaVersion: 1,
+            status: "not_granted",
+            grants: [],
+            stale: false,
+          },
+        },
+      },
+    },
   });
   assertNoError(delivered);
+  assert.equal(
+    delivered.result.structuredContent.scan.progress.phase,
+    "threat_model",
+  );
+  assert.deepEqual(delivered.result.structuredContent.securityPolicyPaths, []);
+  assert.match(
+    delivered.result.content[0].text,
+    /lacks Daybreak access.*https:\/\/chatgpt\.com\/cyber/,
+  );
+  const repeatedHandoff = await testServer.callTool(2004, {
+    name: "get_codex_security_scan_context",
+    arguments: { handoffClaimToken, scanId },
+    _meta: {
+      threadId: "fixture-thread",
+      "openai/entitlementContext": {
+        schemaVersion: 1,
+        entitlements: { cyber_trusted_access: grantedTrustedAccess },
+      },
+    },
+  });
+  assertNoError(repeatedHandoff);
+  assert.doesNotMatch(repeatedHandoff.result.content[0].text, /Daybreak/);
   assert.equal(
     delivered.result.structuredContent.scan.handoffStatus,
     "delivered",
@@ -2628,7 +2668,7 @@ try {
     urlContextUpdate,
   );
 
-  const readyPreflightProgress = await testServer.callTool(90164, {
+  const mappingProgress = await testServer.callTool(90164, {
     name: "update_codex_security_scan_progress",
     _meta: {
       "openai/threadId": "fixture-thread",
@@ -2642,25 +2682,31 @@ try {
       handoffClaimToken,
       phaseItemsTotal: 4,
       phaseItemsCompleted: 4,
-      phaseProgressUnit: "checks",
+      phaseProgressUnit: "threat_surfaces",
     },
   });
-  assertNoError(readyPreflightProgress);
-  assert.equal(
-    readyPreflightProgress.result.structuredContent.scan.model,
-    "gpt-5.6-terra",
-  );
-  assert.equal(
-    readyPreflightProgress.result.structuredContent.scan.reasoningEffort,
-    "low",
-  );
+  assertNoError(mappingProgress);
+  const savedPreflight = await testServer.callTool(90165, {
+    name: "get_codex_security_scan",
+    arguments: { scanId },
+  });
+  assertNoError(savedPreflight);
+  const savedScan = savedPreflight.result.structuredContent.scan;
+  assert.deepEqual(mappingProgress.result.structuredContent, {
+    scan: {
+      scanId,
+      progress: savedScan.progress,
+      userContext: urlContextUpdate,
+    },
+  });
+  assert.equal(savedScan.model, "gpt-5.6-terra");
+  assert.equal(savedScan.reasoningEffort, "low");
   assert.deepEqual(
-    readyPreflightProgress.result.structuredContent.scan.progress
-      .preflightProgress,
-    { completed: 4, total: 4 },
+    mappingProgress.result.structuredContent.scan.progress.preflightProgress,
+    { completed: 0, total: 0 },
   );
   assert.equal(
-    readyPreflightProgress.result.structuredContent.scan.userContext,
+    mappingProgress.result.structuredContent.scan.userContext,
     urlContextUpdate,
   );
 
@@ -2711,8 +2757,8 @@ try {
   assert.deepEqual(
     updated.result.structuredContent.scan.progress.preflightProgress,
     {
-      completed: 4,
-      total: 4,
+      completed: 0,
+      total: 0,
     },
   );
 

@@ -9,9 +9,7 @@ import { PLUGIN_NAME } from "./runtime.js";
 // the ordinary validation sequence with a custom-validation request.
 const SOURCES = {
   "references/core-scan.md":
-    "e0c0e756f6d847ff90b10ed6ad6de37fd827cab18fb1eec25bbb8a25f9a0e61c",
-  "skills/security-scan/SKILL.md":
-    "f236ddc65208fa4a07786923432111a03104286a9a6d2f27b4857a6e9e2a212b",
+    "0b1af254cf3b63295e764775346481f3ba2ae2c4a3d4d3c3eb388368e3fbc521",
   "skills/security-diff-scan/SKILL.md":
     "8a2890f79792dd441849fa4a30a6f2f5469ca1b14224d25ff83637ee7fd23cf5",
 } as const;
@@ -41,45 +39,17 @@ async function source(pluginRoot: string, name: keyof typeof SOURCES) {
   return text;
 }
 
-function step(text: string, number: number): string {
-  return text.match(new RegExp(`^${number}\\. (.+)$`, "m"))![1]!;
-}
-
 export async function customDiscoveryPrompt(
   pluginRoot: string,
   skillName: string,
 ): Promise<string> {
   let workflow: string;
   if (skillName === "security-scan") {
-    const [skill, core] = await Promise.all([
-      source(pluginRoot, "skills/security-scan/SKILL.md"),
-      source(pluginRoot, "references/core-scan.md"),
-    ]);
-    const discovery = core
-      .replace(
-        /^7\. .+$/m,
-        "7. Retain the combined source-backed candidates and their existing evidence. The SDK will run independent final validation in a separate turn.",
-      )
-      .replace(
-        /^Keep discovery, validation, and attack-path reasoning.+$/m,
-        "Keep source-evidence and counterevidence checks within discovery. Do not run an independent final validation pass or invoke separate phase skills.",
-      )
-      .replace(
-        "reconcile their evidence and submit the result;",
-        "reconcile their evidence and preserve provisional candidates through the SDK-owned discovery handoff;",
-      );
+    await source(pluginRoot, "references/core-scan.md");
     workflow = [
-      skill.slice(
-        skill.indexOf("## Host And Setup"),
-        skill.indexOf("## Workflow"),
-      ),
-      "## Discovery workflow",
-      `1. ${step(skill, 1)}`,
-      "2. Perform the embedded core discovery workflow below. Do not reload the ordinary core-scan.md or top-level security-scan skill.",
-      `3. ${step(skill, 3).slice(step(skill, 3).indexOf("For an SDK-owned scan with a bound semantic draft tool,"))}`,
-      `4. ${HANDOFF}`,
-      "## Embedded core discovery workflow",
-      discovery,
+      "Use <plugin_dir>/references/core-scan.md for source discovery. This caller supplies the validation handoff: the SDK runs independent final validation in a separate turn. Check source evidence and counterevidence now, but do not run the default validation pass.",
+      "Keep any supplied investigation time allowance unchanged. Only for an explicit time request with no existing allowance, render <plugin_dir>/references/investigation-time-budget.md once before source review.",
+      HANDOFF,
     ].join("\n\n");
   } else if (skillName === "security-diff-scan") {
     const skill = await source(

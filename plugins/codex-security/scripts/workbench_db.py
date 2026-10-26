@@ -87,9 +87,11 @@ from workbench_local_dedupe import local_dedupe
 from workbench_scan_start import (
     archive_scan,
     insert_running_scan,
+    require_scope,
     safe_segment,
     scan_diff_identity,
     scan_target_identity,
+    starting_policy,
     stored_diff_target,
 )
 from workbench_schema import (
@@ -611,30 +613,6 @@ def verify_manifest_binding(scan: sqlite3.Row, manifest: dict[str, Any]) -> None
             raise SystemExit("scan-manifest.json scope must stay inside the workbench scan scope.")
 
 
-def require_scope(scope: str, mode: str, target: Path) -> str:
-    value = scope if scope.strip() else "."
-    requested_scope = Path(value)
-    if "\\" in value and (os.name != "nt" or not requested_scope.is_absolute()):
-        raise SystemExit("Scan scope must use repository-relative POSIX paths.")
-    if ".." in requested_scope.parts:
-        raise SystemExit("Scan scope must stay inside the scanned target.")
-    try:
-        resolved_scope = (
-            requested_scope if requested_scope.is_absolute() else target / requested_scope
-        ).resolve()
-        relative_scope = resolved_scope.relative_to(target)
-    except (RuntimeError, ValueError) as exc:
-        raise SystemExit("Scan scope must stay inside the scanned target.") from exc
-    normalized = relative_scope.as_posix() or "."
-    if not normalized.strip():
-        normalized = "./" + normalized
-    if mode == "deep" and normalized != ".":
-        raise SystemExit("Deep Scan is repository-wide and cannot use a scoped path.")
-    if not resolved_scope.is_dir():
-        raise SystemExit("Scan scope must reference an existing directory inside the target.")
-    return normalized
-
-
 def require_workspace(connection: sqlite3.Connection, workspace_id: str) -> sqlite3.Row:
     workspace_id = require_uuid(workspace_id, "workspace-id")
     row = connection.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
@@ -975,6 +953,7 @@ def _start_prompt_driven_scan(
     )
     target_root = scan_target_root(args.scan_root, target)
 
+    policy = starting_policy(args.mode, target, [scope])
     busy_timeout = int(connection.execute("PRAGMA busy_timeout").fetchone()[0])
     for attempt in range(SQLITE_RETRY_ATTEMPTS):
         try:
@@ -1046,6 +1025,7 @@ def _start_prompt_driven_scan(
                 connection.commit()
                 return {
                     **scan_context(connection, existing["id"]),
+                    **policy,
                     "startDisposition": "joined",
                 }
             create_private_directory(target_root)
@@ -1118,7 +1098,7 @@ def _start_prompt_driven_scan(
         except BaseException:
             connection.rollback()
             raise
-    return {**scan_context(connection, scan_id), "startDisposition": "created"}
+    return {**scan_context(connection, scan_id), **policy, "startDisposition": "created"}
 
 
 def scan_local_file_digest(scan_dir: Path, relative_path: str) -> str:
@@ -1795,6 +1775,7 @@ def register_cli_scan(
                 raise SystemExit("Working-tree HEAD changed before the scan started.")
             diff_target["contentDigest"] = worktree_content_digest(repository)
     mode = "diff" if diff_target is not None else recipe["mode"]
+    policy = starting_policy(mode, repository, paths or ["."])
     target_identity = scan_target_identity(repository, diff_target)
     source_scopes = capture_source_scopes(
         repository,
@@ -1902,6 +1883,13 @@ def register_cli_scan(
         "scanDir": str(scan_dir),
         "scanId": scan_id,
         "scopeFileCount": scope_file_count,
+        "phase": scan["phase"],
+        **policy,
+        "prepareScopedInventory": (
+            mode == "standard"
+            and requested_target["kind"] == "paths"
+            and (target_identity[0] != "unversioned" or len(file_paths) == len(paths))
+        ),
         "targetId": target_id,
         "targetRevision": scan["target_revision"],
     }
@@ -2748,6 +2736,7 @@ def scan_context(
     connection: sqlite3.Connection,
     scan_id: str,
     occurrence_id: str | None = None,
+    include_policy_paths: bool = False,
 ) -> dict[str, Any]:
     scan = require_scan(connection, scan_id)
     result = scan_result(connection, scan, occurrence_id=occurrence_id)
@@ -2763,6 +2752,17 @@ def scan_context(
         "scan": result,
         "workspace": workspace,
     }
+    if (
+        include_policy_paths
+        and scan["mode"] == "standard"
+        and result["progress"]["status"] == "running"
+        and scan["handoff_status"] == "delivered"
+    ):
+        context.update(
+            starting_policy(
+                "standard", require_scan_target_identity(scan), requested_scan_paths(scan)
+            )
+        )
     if scan["recipe_json"] is not None:
         context["parentScanId"] = scan["parent_scan_id"]
         context["recipe"] = public_scan_recipe(scan)
@@ -2770,7 +2770,7 @@ def scan_context(
 
 
 def get_scan(connection: sqlite3.Connection, args: argparse.Namespace) -> dict[str, Any]:
-    result = scan_context(connection, args.scan_id, args.occurrence_id)
+    result = scan_context(connection, args.scan_id, args.occurrence_id, args.include_policy_paths)
     if result["scan"]["progress"]["status"] != "running":
         scan = require_scan(connection, args.scan_id)
         try:

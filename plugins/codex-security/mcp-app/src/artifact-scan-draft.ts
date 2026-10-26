@@ -127,6 +127,41 @@ export interface ScanDraftResult {
   warnings?: string[];
 }
 
+/** Return only IDs the caller needs to learn to update its submitted rows. */
+export function scanDraftToolResponse(
+  { coverage, ...receipt }: ScanDraftResult,
+  input: ScanDraftInput,
+) {
+  const assigned = (
+    rows: { id?: string }[],
+    normalized: { id?: string }[],
+    saved: { id: string }[],
+  ) => {
+    const savedIds = new Set(saved.map(({ id }) => id));
+    return normalized.flatMap(({ id }, index) =>
+      id !== undefined && id !== rows[index]!.id && savedIds.has(id)
+        ? [{ index, id }]
+        : [],
+    );
+  };
+  const { surfaces, deferred } = input.coverage;
+  const assignedSurfaces = assigned(
+    surfaces,
+    normalizeSurfaces(surfaces),
+    coverage.surfaces as { id: string }[],
+  );
+  const assignedDeferred = assigned(
+    deferred,
+    normalizeDeferred(deferred),
+    coverage.deferred as { id: string }[],
+  );
+  return {
+    ...receipt,
+    ...(assignedSurfaces.length ? { assignedSurfaces } : {}),
+    ...(assignedDeferred.length ? { assignedDeferred } : {}),
+  };
+}
+
 export interface CompletedScanResult extends PreparedScanDraft {
   scanId: string;
 }

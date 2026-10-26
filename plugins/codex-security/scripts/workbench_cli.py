@@ -104,6 +104,7 @@ def parse_args(description: str) -> argparse.Namespace:
     get_scan = add_command("get-scan", "--scan-id")
     get_scan.add_argument("--occurrence-id")
     get_scan.add_argument("--check-target", action="store_true")
+    get_scan.add_argument("--include-policy-paths", action="store_true")
 
     add_command("rename-scan", "--scan-id", "--name")
 
@@ -253,6 +254,7 @@ def parse_args(description: str) -> argparse.Namespace:
 
     mark_handoff_delivered = add_command("mark-handoff-delivered", "--scan-id", "--claim-token")
     mark_handoff_delivered.add_argument("--thread-id")
+    mark_handoff_delivered.add_argument("--begin-standard-review", action="store_true")
 
     claim_handoff_delivery = add_command("claim-handoff-delivery", "--scan-id", "--claim-token")
     claim_handoff_delivery.add_argument("--take-over-stale", action="store_true")
