@@ -171,6 +171,30 @@ def complete(workbench_api, connection, scan, *, prepare_only=False):
     )["scan"]
 
 
+def fail_scan(workbench_api, connection, scan, message="Stopped."):
+    return workbench_api["saved_results"].fail_scan(
+        workbench_api["_WORKBENCH_DB_CONTEXT"],
+        connection,
+        Namespace(scan_id=scan.scan_id, claim_token=None, cost_json=None, message=message),
+    )["scan"]
+
+
+def preserve_scan_results(workbench_api, connection, scan):
+    return workbench_api["saved_results"].preserve_scan_results(
+        workbench_api["_WORKBENCH_DB_CONTEXT"],
+        connection,
+        Namespace(
+            scan_id=scan.scan_id, claim_token=None, thread_id=None, coordinator_generation=None
+        ),
+    )["scan"]
+
+
+def recover_scan_results(workbench_api, connection, scan):
+    return workbench_api["saved_results"].recover_scan_results(
+        workbench_api["_WORKBENCH_DB_CONTEXT"], connection, Namespace(scan_id=scan.scan_id)
+    )["scan"]
+
+
 def assert_published_aggregate(scan):
     findings = json.loads((scan.scan_dir / "findings.json").read_text())["findings"]
     for finding in findings:
@@ -178,10 +202,17 @@ def assert_published_aggregate(scan):
             value = finding.pop(field)
             assert value
     assert findings == scan.findings
-    coverage = json.loads((scan.scan_dir / "coverage.json").read_text())
-    for field in ("documentType", "schemaVersion", "scanId"):
-        coverage.pop(field)
-    assert coverage == scan.coverage
+    manifest = json.loads((scan.scan_dir / "scan-manifest.json").read_text())
+    if "coverageRef" in manifest["scan"]:
+        coverage = json.loads((scan.scan_dir / "coverage.json").read_text())
+        for field in ("documentType", "schemaVersion", "scanId"):
+            coverage.pop(field)
+        assert coverage == scan.coverage
+    else:
+        assert manifest["scan"]["review"] == {
+            "excludedPaths": [item["pattern"] for item in scan.coverage["explicitExclusions"]],
+        }
+        assert not (scan.scan_dir / "coverage.json").exists()
     assert (scan.scan_dir / "report.md").is_file()
 
 
@@ -339,7 +370,7 @@ def test_deep_prepare_and_complete_preserve_the_same_aggregate(
     scan = publication_scan()
     prepared = complete(workbench_api, workbench_db, scan, prepare_only=True)
     assert prepared["progress"]["status"] == "running"
-    names = ("scan-manifest.json", "findings.json", "coverage.json")
+    names = ("scan-manifest.json", "findings.json")
     published = {name: (scan.scan_dir / name).read_bytes() for name in names}
 
     complete(workbench_api, workbench_db, scan, prepare_only=True)
@@ -663,13 +694,7 @@ def test_stopped_deep_scan_still_salvages_saved_findings(
         result.write_text("{interrupted worker output")
     result_bytes = result.read_bytes()
 
-    stopped = workbench_api["saved_results"].fail_scan(
-        workbench_api["_WORKBENCH_DB_CONTEXT"],
-        workbench_db,
-        Namespace(
-            scan_id=scan.scan_id, claim_token=None, cost_json=None, message="Scan interrupted."
-        ),
-    )["scan"]
+    stopped = fail_scan(workbench_api, workbench_db, scan, "Scan interrupted.")
 
     assert stopped["progress"]["status"] == "failed"
     manifest = json.loads((scan.scan_dir / "scan-manifest.json").read_text())
@@ -681,11 +706,9 @@ def test_stopped_deep_scan_still_salvages_saved_findings(
         expected_summaries.add(scan.findings[0]["summary"])
     assert {finding["summary"] for finding in findings} == expected_summaries
 
-    artifact_names = ("scan-manifest.json", "findings.json", "coverage.json")
+    artifact_names = ("scan-manifest.json", "findings.json")
     published = {name: (scan.scan_dir / name).read_bytes() for name in artifact_names}
-    recovered = workbench_api["saved_results"].recover_scan_results(
-        workbench_api["_WORKBENCH_DB_CONTEXT"], workbench_db, Namespace(scan_id=scan.scan_id)
-    )["scan"]
+    recovered = recover_scan_results(workbench_api, workbench_db, scan)
     assert recovered["findingCount"] == len(expected_summaries)
     assert {name: (scan.scan_dir / name).read_bytes() for name in artifact_names} == published
     if checkpoint is not None:
@@ -726,13 +749,7 @@ def test_stopped_deep_scan_ignores_non_reducer_sources_without_coverage(
     source_bytes = source_path.read_bytes()
     source_relative = source_path.relative_to(scan.scan_dir).as_posix()
 
-    stopped = workbench_api["saved_results"].fail_scan(
-        workbench_api["_WORKBENCH_DB_CONTEXT"],
-        workbench_db,
-        Namespace(
-            scan_id=scan.scan_id, claim_token=None, cost_json=None, message="Scan interrupted."
-        ),
-    )["scan"]
+    stopped = fail_scan(workbench_api, workbench_db, scan, "Scan interrupted.")
 
     assert stopped["progress"]["status"] == "failed"
     assert stopped["resultsRecoveryNeeded"] is False
@@ -746,12 +763,10 @@ def test_stopped_deep_scan_ignores_non_reducer_sources_without_coverage(
     )
     assert manifest["scan"]["preservedSources"] == frozen
     assert source_relative not in frozen
-    artifact_names = ("scan-manifest.json", "findings.json", "coverage.json")
+    artifact_names = ("scan-manifest.json", "findings.json")
     published = {name: (scan.scan_dir / name).read_bytes() for name in artifact_names}
 
-    recovered = workbench_api["saved_results"].recover_scan_results(
-        workbench_api["_WORKBENCH_DB_CONTEXT"], workbench_db, Namespace(scan_id=scan.scan_id)
-    )["scan"]
+    recovered = recover_scan_results(workbench_api, workbench_db, scan)
 
     assert recovered["findingCount"] == 1
     assert recovered["resultsRecoveryNeeded"] is False
@@ -943,13 +958,7 @@ def test_deep_publication_preserves_original_scope_kinds_after_checkout_changes(
         == file_paths
     )
     if stopped:
-        workbench_api["saved_results"].fail_scan(
-            workbench_api["_WORKBENCH_DB_CONTEXT"],
-            workbench_db,
-            Namespace(
-                scan_id=scan.scan_id, claim_token=None, cost_json=None, message="interrupted"
-            ),
-        )
+        fail_scan(workbench_api, workbench_db, scan, "interrupted")
     else:
         assert complete(workbench_api, workbench_db, scan)["progress"]["status"] == "complete"
     expected_paths = ["subdir/extract.py"] + ([] if file_paths else ["subdir/extract.py/generated"])
@@ -998,13 +1007,7 @@ def test_stopped_deep_projection_filters_the_canonical_parent(
     scan = publication_scan(paths=[scope, "background jobs"])
     scan.findings[0]["locations"] = [{"path": location, "startLine": 1}]
     (scan.scan_dir / "findings.json").write_text(json.dumps({"findings": scan.findings}))
-    stopped = workbench_api["saved_results"].fail_scan(
-        workbench_api["_WORKBENCH_DB_CONTEXT"],
-        workbench_db,
-        Namespace(
-            scan_id=scan.scan_id, claim_token=None, cost_json=None, message="Scan interrupted."
-        ),
-    )["scan"]
+    stopped = fail_scan(workbench_api, workbench_db, scan, "Scan interrupted.")
     assert stopped["progress"]["status"] == "failed"
     assert stopped["findingCount"] == 0
     assert json.loads((scan.scan_dir / "findings.json").read_text())["findings"] == []
@@ -1028,19 +1031,13 @@ def test_stopped_file_scope_filters_siblings_before_assigning_identity(
     checkpoint_bytes = checkpoint.read_bytes()
     for name in ("scan-manifest.json", "findings.json", "coverage.json"):
         (scan.scan_dir / name).unlink()
-    workbench_api["saved_results"].fail_scan(
-        workbench_api["_WORKBENCH_DB_CONTEXT"],
-        workbench_db,
-        Namespace(scan_id=scan.scan_id, claim_token=None, cost_json=None, message="Interrupted."),
-    )
+    fail_scan(workbench_api, workbench_db, scan, "Interrupted.")
     findings = json.loads((scan.scan_dir / "findings.json").read_text())["findings"]
     assert len(findings) == 1
     assert findings[0]["locations"][0]["path"] == "subdir/extract.py"
     assert findings[0]["identity"] == {"anchor": "candidate-review"}
-    names = ("scan-manifest.json", "findings.json", "coverage.json")
+    names = ("scan-manifest.json", "findings.json")
     published = {name: (scan.scan_dir / name).read_bytes() for name in names}
-    workbench_api["saved_results"].recover_scan_results(
-        workbench_api["_WORKBENCH_DB_CONTEXT"], workbench_db, Namespace(scan_id=scan.scan_id)
-    )
+    recover_scan_results(workbench_api, workbench_db, scan)
     assert {name: (scan.scan_dir / name).read_bytes() for name in names} == published
     assert checkpoint.read_bytes() == checkpoint_bytes
