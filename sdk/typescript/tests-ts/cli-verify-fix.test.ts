@@ -630,62 +630,71 @@ describe("read-only finding verification", () => {
     expect(stdout.text()).not.toContain(sensitiveMarker);
   });
 
-  test("fails atomically when a middle verification request fails", async () => {
-    const { result, findings } = savedScanWithEvidence(
-      ["high", "high", "high"],
-      "x".repeat(525_000),
-    );
-    let calls = 0;
-    const { stdout, stderr, runCli } = createCliTest(main);
+  test.each([
+    ["transport failure", "Synthetic middle transport failure."],
+    [
+      "wrong identifier",
+      "Codex did not return an evidence-backed verification result for every finding.",
+    ],
+  ])(
+    "fails atomically on a middle verification %s",
+    async (failure, message) => {
+      const { result, findings } = savedScanWithEvidence(
+        ["high", "high", "high"],
+        "x".repeat(525_000),
+      );
+      let calls = 0;
+      const { stdout, stderr, runCli } = createCliTest(main);
 
-    expect(
-      await runCli(
-        ["verify-fix", "--scan", "scan-failure", "--json"],
-        dependencies({
-          result,
-          onWorkbench: () => ({
-            scan: {
-              scanId: "scan-failure",
-              targetPath: "/saved/repository",
-              findings: findings as unknown as JsonObject[],
+      expect(
+        await runCli(
+          ["verify-fix", "--scan", "scan-failure", "--json"],
+          dependencies({
+            result,
+            onWorkbench: () => ({
+              scan: {
+                scanId: "scan-failure",
+                targetPath: "/saved/repository",
+                findings: findings as unknown as JsonObject[],
+              },
+            }),
+            onCodex: (_args, output) => {
+              calls += 1;
+              expect(
+                turnStartTextCharacters(output!.appServer!.prompt),
+              ).toBeLessThanOrEqual(CODEX_INPUT_LIMIT);
+              if (calls === 2 && failure === "transport failure") {
+                output!.stderr.write(`${message}\n`);
+                return 1;
+              }
+              const supplied = JSON.parse(
+                output!.appServer!.prompt.split("\n").at(-1)!,
+              ) as Finding[];
+              output!.stdout.write(
+                JSON.stringify({
+                  results: supplied.map(({ occurrenceId }) => ({
+                    id: calls === 2 ? "occ_wrong" : occurrenceId,
+                    status: "fixed",
+                    evidence: "Synthetic verification passed.",
+                  })),
+                }),
+              );
+              return 0;
             },
           }),
-          onCodex: (_args, output) => {
-            calls += 1;
-            expect(
-              turnStartTextCharacters(output!.appServer!.prompt),
-            ).toBeLessThanOrEqual(CODEX_INPUT_LIMIT);
-            if (calls === 2) {
-              output!.stderr.write("Synthetic middle transport failure.\n");
-              return 1;
-            }
-            const supplied = JSON.parse(
-              output!.appServer!.prompt.split("\n").at(-1)!,
-            ) as Finding[];
-            output!.stdout.write(
-              JSON.stringify({
-                results: supplied.map(({ occurrenceId }) => ({
-                  id: occurrenceId,
-                  status: "fixed",
-                  evidence: "Synthetic verification passed.",
-                })),
-              }),
-            );
-            return 0;
-          },
-        }),
-      ),
-    ).toBe(2);
+        ),
+      ).toBe(2);
 
-    expect(calls).toBe(2);
-    expect(JSON.parse(stdout.text())).toMatchObject({
-      status: "failed",
-      code: "VERIFICATION_FAILED",
-      message: "Synthetic middle transport failure.",
-    });
-    expect(JSON.parse(stdout.text())).not.toHaveProperty("results");
-    expect(stderr.text()).toContain("Synthetic middle transport failure.");
-  });
+      expect(calls).toBe(2);
+      expect(JSON.parse(stdout.text())).toMatchObject({
+        status: "failed",
+        code: "VERIFICATION_FAILED",
+        message,
+      });
+      expect(JSON.parse(stdout.text())).not.toHaveProperty("results");
+      expect(stderr.text()).toContain(message);
+    },
+  );
 
   test.each([130, 143] as const)(
     "preserves interrupted status %i from a middle verification request",
@@ -733,66 +742,6 @@ describe("read-only finding verification", () => {
       expect(stdout.text()).toBe("");
     },
   );
-
-  test("rejects a malformed middle response without retaining partial verdicts", async () => {
-    const { result, findings } = savedScanWithEvidence(
-      ["high", "high", "high"],
-      "x".repeat(525_000),
-    );
-    let calls = 0;
-    const { stdout, stderr, runCli } = createCliTest(main);
-
-    expect(
-      await runCli(
-        ["verify-fix", "--scan", "scan-malformed", "--json"],
-        dependencies({
-          result,
-          onWorkbench: () => ({
-            scan: {
-              scanId: "scan-malformed",
-              targetPath: "/saved/repository",
-              findings: findings as unknown as JsonObject[],
-            },
-          }),
-          onCodex: (_args, output) => {
-            calls += 1;
-            const supplied = JSON.parse(
-              output!.appServer!.prompt.split("\n").at(-1)!,
-            ) as Finding[];
-            output!.stdout.write(
-              JSON.stringify({
-                results:
-                  calls === 2
-                    ? [
-                        {
-                          id: "occ_wrong",
-                          status: "fixed",
-                          evidence: "Wrong finding.",
-                        },
-                      ]
-                    : supplied.map(({ occurrenceId }) => ({
-                        id: occurrenceId,
-                        status: "fixed",
-                        evidence: "Synthetic verification passed.",
-                      })),
-              }),
-            );
-            return 0;
-          },
-        }),
-      ),
-    ).toBe(2);
-
-    expect(calls).toBe(2);
-    expect(JSON.parse(stdout.text())).toMatchObject({
-      status: "failed",
-      code: "VERIFICATION_FAILED",
-    });
-    expect(JSON.parse(stdout.text())).not.toHaveProperty("results");
-    expect(stderr.text()).toContain(
-      "an evidence-backed verification result for every finding",
-    );
-  });
 
   test("reports inconclusive findings without treating them as fixed", async () => {
     const stdout = captureCli(main, "stdout");

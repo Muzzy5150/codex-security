@@ -58,16 +58,6 @@ function arrayElementJson(value: unknown): string {
   return array.slice(1, -1);
 }
 
-function jsonArrayCharacters(elements: readonly number[]): number {
-  return (
-    2 +
-    elements.reduce(
-      (total, characters, index) => total + characters + (index === 0 ? 0 : 1),
-      0,
-    )
-  );
-}
-
 /** Plan exact prompts that fit Codex turn/start without dropping evidence. */
 export async function planVerificationRequests<Content>(
   input: Omit<
@@ -126,10 +116,11 @@ export async function planVerificationRequests<Content>(
     if (end === start) {
       const singleCharacters =
         fixedCharacters +
-        jsonArrayCharacters([contentCharacters[start]!]) +
-        jsonArrayCharacters([identifierCharacters[start]!]);
+        4 +
+        contentCharacters[start]! +
+        identifierCharacters[start]!;
       throw new CodexSecurityError(
-        `A selected finding cannot fit in one complete Codex verification request. The request requires ${singleCharacters} characters, but Codex accepts at most ${MAX_VERIFICATION_INPUT_CHARS}. Run a narrower scan that records smaller evidence or use a transport with a larger input limit, then retry.`,
+        `A selected finding cannot fit in one complete Codex verification request. The request requires ${singleCharacters} characters, but Codex accepts at most ${MAX_VERIFICATION_INPUT_CHARS}. Run a narrower scan that records smaller evidence, then retry.`,
       );
     }
 
